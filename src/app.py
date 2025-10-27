@@ -5,19 +5,74 @@ A super simple FastAPI application that allows students to view and sign up
 for extracurricular activities at Mergington High School.
 """
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Depends, status
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import RedirectResponse
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from pydantic import BaseModel
 import os
+import json
+import hashlib
 from pathlib import Path
 
 app = FastAPI(title="Mergington High School API",
               description="API for viewing and signing up for extracurricular activities")
 
+# Security scheme
+security = HTTPBearer(auto_error=False)
+
 # Mount the static files directory
 current_dir = Path(__file__).parent
 app.mount("/static", StaticFiles(directory=os.path.join(Path(__file__).parent,
           "static")), name="static")
+
+# Pydantic models
+class LoginRequest(BaseModel):
+    username: str
+    password: str
+
+class AuthResponse(BaseModel):
+    success: bool
+    token: str = None
+    teacher_name: str = None
+    message: str = None
+
+# Load teacher credentials
+def load_teachers():
+    try:
+        with open(os.path.join(Path(__file__).parent, "teachers.json"), "r") as f:
+            return json.load(f)
+    except FileNotFoundError:
+        return {"teachers": {}}
+
+# Simple token generation (in production, use proper JWT)
+def generate_simple_token(username: str) -> str:
+    return hashlib.md5(f"teacher_{username}_token".encode()).hexdigest()
+
+# Verify teacher authentication
+def verify_teacher_token(credentials: HTTPAuthorizationCredentials = Depends(security)):
+    if not credentials:
+        return None
+    
+    # Simple token verification (in production, use proper JWT validation)
+    token = credentials.credentials
+    teachers_data = load_teachers()
+    
+    for username, teacher_info in teachers_data.get("teachers", {}).items():
+        expected_token = generate_simple_token(username)
+        if token == expected_token:
+            return {"username": username, "name": teacher_info["name"]}
+    
+    return None
+
+# Dependency to require teacher authentication
+def require_teacher(teacher = Depends(verify_teacher_token)):
+    if not teacher:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Teacher authentication required"
+        )
+    return teacher
 
 # In-memory activity database
 activities = {
@@ -88,9 +143,32 @@ def get_activities():
     return activities
 
 
+@app.post("/auth/login")
+def login(request: LoginRequest):
+    """Authenticate a teacher"""
+    teachers_data = load_teachers()
+    teachers = teachers_data.get("teachers", {})
+    
+    if request.username in teachers:
+        teacher = teachers[request.username]
+        if teacher["password"] == request.password:
+            token = generate_simple_token(request.username)
+            return AuthResponse(
+                success=True,
+                token=token,
+                teacher_name=teacher["name"],
+                message="Login successful"
+            )
+    
+    return AuthResponse(
+        success=False,
+        message="Invalid username or password"
+    )
+
+
 @app.post("/activities/{activity_name}/signup")
-def signup_for_activity(activity_name: str, email: str):
-    """Sign up a student for an activity"""
+def signup_for_activity(activity_name: str, email: str, teacher = Depends(require_teacher)):
+    """Sign up a student for an activity (Teacher only)"""
     # Validate activity exists
     if activity_name not in activities:
         raise HTTPException(status_code=404, detail="Activity not found")
@@ -111,8 +189,8 @@ def signup_for_activity(activity_name: str, email: str):
 
 
 @app.delete("/activities/{activity_name}/unregister")
-def unregister_from_activity(activity_name: str, email: str):
-    """Unregister a student from an activity"""
+def unregister_from_activity(activity_name: str, email: str, teacher = Depends(require_teacher)):
+    """Unregister a student from an activity (Teacher only)"""
     # Validate activity exists
     if activity_name not in activities:
         raise HTTPException(status_code=404, detail="Activity not found")
