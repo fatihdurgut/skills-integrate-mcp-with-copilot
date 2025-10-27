@@ -1,0 +1,19 @@
+{
+  "teachers": {
+    "john.smith": {
+      "password": "password123",
+      "name": "John Smith",
+      "department": "Mathematics"
+    },
+    "jane.doe": {
+      "password": "teacher456",
+      "name": "Jane Doe", 
+      "department": "Computer Science"
+    },
+    "robert.brown": {
+      "password": "coach789",
+      "name": "Robert Brown",
+      "department": "Physical Education"
+    }
+  }
+}
